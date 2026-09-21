@@ -597,7 +597,8 @@ public class ChargingControlController extends LineageHealthFeature {
         mCurrentProvider.enable();
 
         if (mode == MODE_LIMIT) {
-            if (mCurrentProvider.update(mBatteryPct, limit) && mIsPowerConnected) {
+            if (mCurrentProvider.update(mBatteryPct, limit, getRechargeLevel())
+                    && mIsPowerConnected) {
                 mChargingNotification.post(limit, mBatteryPct >= limit);
             } else {
                 mChargingNotification.cancel();
