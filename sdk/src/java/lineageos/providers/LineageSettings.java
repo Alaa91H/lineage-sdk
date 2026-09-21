@@ -1435,14 +1435,14 @@ public final class LineageSettings {
 
         /**
          * Battery level at which charging resumes while limit charging is active.
-         * The value is a percentage from 20 to 95.
+         * The value is a percentage from 20 to 99.
          */
         public static final String CHARGING_CONTROL_RECHARGE_LEVEL =
                 "charging_control_recharge_level";
 
         /** @hide */
         public static final Validator CHARGING_CONTROL_RECHARGE_LEVEL_VALIDATOR =
-                new InclusiveIntegerRangeValidator(20, 95);
+                new InclusiveIntegerRangeValidator(20, 99);
 
         /**
          * Whether limit charging should only be active during a user-defined time window.
