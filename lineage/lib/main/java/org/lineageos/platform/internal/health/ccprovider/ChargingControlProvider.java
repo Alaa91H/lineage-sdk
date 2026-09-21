@@ -80,8 +80,9 @@ public abstract class ChargingControlProvider {
      * Called when the mode is {@link lineageos.health.HealthInterface#MODE_LIMIT} and
      * the {@link android.content.Intent#ACTION_BATTERY_CHANGED} is received.
      *
-     * @param currentPct Current battery percentage
-     * @param targetPct  The user-configured target charging limit
+     * @param currentPct   Current battery percentage
+     * @param targetPct    The user-configured target charging limit
+     * @param rechargeLevel Battery percentage at which charging should resume
      * @return Whether a notification should be posted
      */
     protected boolean onBatteryChanged(float currentPct, int targetPct, int rechargeLevel) {
