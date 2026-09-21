@@ -44,6 +44,25 @@ if stage.find("batteryPct < CHARGE_CTRL_MIN_LEVEL") > stage.find("getEstimatedCh
 if 'private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);' not in limit:
     raise SystemExit("Limit hot-path diagnostics must remain DEBUG-gated")
 
+for token in (
+    "private int mAppliedMin = UNKNOWN_LIMIT",
+    "private int mAppliedMax = UNKNOWN_LIMIT",
+    "mAppliedMax == targetPct && mAppliedMin == minPct",
+    "mAppliedMin = UNKNOWN_LIMIT",
+    "mAppliedMax = UNKNOWN_LIMIT",
+):
+    if token not in limit:
+        raise SystemExit(f"Limit applied-state cache invariant missing: {token}")
+
+if "mChargingControl.getChargingLimit()" in limit:
+    raise SystemExit("Limit provider must not query HAL state on every battery update")
+
+reset_start = limit.find("protected void onReset()")
+reset_end = limit.find("private boolean setChargingLimit", reset_start)
+reset = limit[reset_start:reset_end]
+if reset.find("mAppliedMin = UNKNOWN_LIMIT") > reset.find("setChargingLimit(100, 0)"):
+    raise SystemExit("Limit reset must invalidate cache before synchronizing HAL state")
+
 support_start = provider.find("public final boolean isHALModeSupported(int mode)")
 support_end = provider.find("\n    }", support_start)
 support = provider[support_start:support_end]
