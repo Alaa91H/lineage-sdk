@@ -46,6 +46,7 @@ public class ChargingControlController extends LineageHealthFeature {
     private ChargingControlNotification mChargingNotification;
     private LineageHealthBatteryBroadcastReceiver mBattReceiver;
     private BroadcastReceiver mAlarmBroadcastReceiver;
+    private BroadcastReceiver mCancelOnceDisconnectReceiver;
     private boolean mIsEnabled = false;
 
     // Defaults
@@ -78,7 +79,9 @@ public class ChargingControlController extends LineageHealthFeature {
     // Internal state
     private float mBatteryPct;
     private boolean mIsPowerConnected;
+    private boolean mIsPhysicallyPlugged;
     private boolean mIsControlCancelledOnce;
+    private boolean mTimeChangedReceiverRegistered;
     private long mLimitScheduleAlarmAt;
     private final AlarmManager.OnAlarmListener mLimitScheduleAlarmListener = () -> {
         mLimitScheduleAlarmAt = 0;
@@ -171,13 +174,27 @@ public class ChargingControlController extends LineageHealthFeature {
             return false;
         }
 
-        mCurrentProvider = getProviderForMode(mode);
-
-        if (mCurrentProvider == null) {
+        if (!switchProviderForMode(mode)) {
             return false;
         }
 
         putInt(LineageSettings.System.CHARGING_CONTROL_MODE, mode);
+        return true;
+    }
+
+    private boolean switchProviderForMode(int mode) {
+        final ChargingControlProvider provider = getProviderForMode(mode);
+        if (provider == null) {
+            return false;
+        }
+
+        if (provider != mCurrentProvider) {
+            if (mCurrentProvider != null) {
+                mCurrentProvider.disable();
+            }
+            mCurrentProvider = provider;
+            mCurrentProvider.reset();
+        }
         return true;
     }
 
@@ -324,7 +341,8 @@ public class ChargingControlController extends LineageHealthFeature {
             return;
         }
 
-        if (!isEnabled() || getMode() != MODE_LIMIT || !isLimitScheduleEnabled()) {
+        if (!isEnabled() || getMode() != MODE_LIMIT || !isLimitScheduleEnabled()
+                || !mIsPhysicallyPlugged) {
             if (mLimitScheduleAlarmAt != 0) {
                 alarmManager.cancel(mLimitScheduleAlarmListener);
                 mLimitScheduleAlarmAt = 0;
@@ -374,6 +392,7 @@ public class ChargingControlController extends LineageHealthFeature {
     private void updateBatteryInfo(Intent intent) {
         int battStatus = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
         int battPlugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+        mIsPhysicallyPlugged = battPlugged != 0;
 
         if (battStatus == BatteryManager.BATTERY_STATUS_FULL) {
             mIsControlCancelledOnce = false;
@@ -423,8 +442,40 @@ public class ChargingControlController extends LineageHealthFeature {
         timeChangedFilter.addAction(Intent.ACTION_TIME_CHANGED);
         timeChangedFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         mContext.registerReceiver(mTimeChangedBroadcastReceiver, timeChangedFilter);
+        mTimeChangedReceiverRegistered = true;
 
         handleSettingChange();
+    }
+
+    @Override
+    public void onDestroy() {
+        final AlarmManager alarmManager = mContext.getSystemService(AlarmManager.class);
+        if (alarmManager != null && mLimitScheduleAlarmAt != 0) {
+            alarmManager.cancel(mLimitScheduleAlarmListener);
+            mLimitScheduleAlarmAt = 0;
+        }
+
+        if (mTimeChangedReceiverRegistered) {
+            mContext.unregisterReceiver(mTimeChangedBroadcastReceiver);
+            mTimeChangedReceiverRegistered = false;
+        }
+
+        if (mAlarmBroadcastReceiver != null) {
+            mContext.unregisterReceiver(mAlarmBroadcastReceiver);
+            mAlarmBroadcastReceiver = null;
+        }
+
+        if (mBattReceiver != null) {
+            mContext.unregisterReceiver(mBattReceiver);
+            mBattReceiver = null;
+        }
+
+        if (mCancelOnceDisconnectReceiver != null) {
+            mContext.unregisterReceiver(mCancelOnceDisconnectReceiver);
+            mCancelOnceDisconnectReceiver = null;
+        }
+
+        super.onDestroy();
     }
 
     public boolean isChargingModeSupported(int mode) {
@@ -453,20 +504,24 @@ public class ChargingControlController extends LineageHealthFeature {
 
         mIsControlCancelledOnce = true;
 
-        if (mCurrentProvider.requiresBatteryLevelMonitoring()) {
-            IntentFilter disconnectFilter = new IntentFilter(
+        if (mCurrentProvider.requiresBatteryLevelMonitoring()
+                && mCancelOnceDisconnectReceiver == null) {
+            final IntentFilter disconnectFilter = new IntentFilter(
                     Intent.ACTION_POWER_DISCONNECTED);
 
-            // Register a one-time receiver that resets internal state on power
-            // disconnection
-            mContext.registerReceiver(new BroadcastReceiver() {
+            // Register a one-time receiver that resets internal state on power disconnection.
+            // Keep an explicit reference so repeated cancellations cannot stack receivers and
+            // feature teardown can always unregister it.
+            mCancelOnceDisconnectReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     Log.i(TAG, "Power disconnected, reset internal states");
                     resetInternalState();
                     mContext.unregisterReceiver(this);
+                    mCancelOnceDisconnectReceiver = null;
                 }
-            }, disconnectFilter);
+            };
+            mContext.registerReceiver(mCancelOnceDisconnectReceiver, disconnectFilter);
         }
 
         mCurrentProvider.disable();
@@ -628,21 +683,6 @@ public class ChargingControlController extends LineageHealthFeature {
         }
     }
 
-    /**
-     * Whether the current charging control mode supports supports the mode.
-     * Available modes:
-     *     - ${@link lineageos.health.HealthInterface#MODE_AUTO}
-     *     - ${@link lineageos.health.HealthInterface#MODE_MANUAL}
-     *     - ${@link lineageos.health.HealthInterface#MODE_LIMIT}
-     */
-    private boolean isProvideSupportCCMode(int mode) {
-        if (mCurrentProvider == null) {
-            return false;
-        }
-
-        return mCurrentProvider.isChargingControlModeSupported(mode);
-    }
-
     private void handleSettingChange() {
         int mode = getMode();
 
@@ -667,10 +707,14 @@ public class ChargingControlController extends LineageHealthFeature {
             }
         }
 
-        if (!isProvideSupportCCMode(mode)) {
-            Log.e(TAG, "Current provider does not support mode: " + mode
+        if (!switchProviderForMode(mode)) {
+            Log.e(TAG, "No provider supports mode: " + mode
                     + ", setting to default mode");
-            setMode(mDefaultMode);
+            if (!setMode(mDefaultMode)) {
+                Log.e(TAG, "Unable to switch to default charging control mode");
+                return;
+            }
+            mode = mDefaultMode;
         }
 
         // Reset internal states
@@ -685,6 +729,16 @@ public class ChargingControlController extends LineageHealthFeature {
 
     @Override
     protected void onSettingsChanged(Uri uri) {
+        if (RECHARGE_LEVEL_URI.equals(uri)
+                || LIMIT_SCHEDULE_ENABLED_URI.equals(uri)
+                || LIMIT_START_TIME_URI.equals(uri)
+                || LIMIT_END_TIME_URI.equals(uri)) {
+            // These settings can be applied in place. Avoid resetting the provider, which may
+            // briefly restore unrestricted charging before the new configuration is applied.
+            updateBatteryInfo();
+            updateChargeControl();
+            return;
+        }
         handleSettingChange();
     }
 
@@ -706,6 +760,7 @@ public class ChargingControlController extends LineageHealthFeature {
         pw.println("  mIsEnabled: " + mIsEnabled);
         pw.println("  mBatteryPct: " + mBatteryPct);
         pw.println("  mIsPowerConnected: " + mIsPowerConnected);
+        pw.println("  mIsPhysicallyPlugged: " + mIsPhysicallyPlugged);
         pw.println("  mIsNotificationPosted: " + mChargingNotification.isPosted());
         pw.println("  mIsDoneNotification: " + mChargingNotification.isDoneNotification());
         pw.println("  mIsControlCancelledOnce: " + mIsControlCancelledOnce);
