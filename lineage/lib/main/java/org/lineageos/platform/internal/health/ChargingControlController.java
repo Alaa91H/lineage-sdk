@@ -78,7 +78,9 @@ public class ChargingControlController extends LineageHealthFeature {
     // Internal state
     private float mBatteryPct;
     private boolean mIsPowerConnected;
+    private boolean mIsPhysicallyPlugged;
     private boolean mIsControlCancelledOnce;
+    private boolean mTimeChangedReceiverRegistered;
     private long mLimitScheduleAlarmAt;
     private final AlarmManager.OnAlarmListener mLimitScheduleAlarmListener = () -> {
         mLimitScheduleAlarmAt = 0;
@@ -324,7 +326,8 @@ public class ChargingControlController extends LineageHealthFeature {
             return;
         }
 
-        if (!isEnabled() || getMode() != MODE_LIMIT || !isLimitScheduleEnabled()) {
+        if (!isEnabled() || getMode() != MODE_LIMIT || !isLimitScheduleEnabled()
+                || !mIsPhysicallyPlugged) {
             if (mLimitScheduleAlarmAt != 0) {
                 alarmManager.cancel(mLimitScheduleAlarmListener);
                 mLimitScheduleAlarmAt = 0;
@@ -374,6 +377,7 @@ public class ChargingControlController extends LineageHealthFeature {
     private void updateBatteryInfo(Intent intent) {
         int battStatus = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
         int battPlugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+        mIsPhysicallyPlugged = battPlugged != 0;
 
         if (battStatus == BatteryManager.BATTERY_STATUS_FULL) {
             mIsControlCancelledOnce = false;
@@ -423,8 +427,35 @@ public class ChargingControlController extends LineageHealthFeature {
         timeChangedFilter.addAction(Intent.ACTION_TIME_CHANGED);
         timeChangedFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         mContext.registerReceiver(mTimeChangedBroadcastReceiver, timeChangedFilter);
+        mTimeChangedReceiverRegistered = true;
 
         handleSettingChange();
+    }
+
+    @Override
+    public void onDestroy() {
+        final AlarmManager alarmManager = mContext.getSystemService(AlarmManager.class);
+        if (alarmManager != null && mLimitScheduleAlarmAt != 0) {
+            alarmManager.cancel(mLimitScheduleAlarmListener);
+            mLimitScheduleAlarmAt = 0;
+        }
+
+        if (mTimeChangedReceiverRegistered) {
+            mContext.unregisterReceiver(mTimeChangedBroadcastReceiver);
+            mTimeChangedReceiverRegistered = false;
+        }
+
+        if (mAlarmBroadcastReceiver != null) {
+            mContext.unregisterReceiver(mAlarmBroadcastReceiver);
+            mAlarmBroadcastReceiver = null;
+        }
+
+        if (mBattReceiver != null) {
+            mContext.unregisterReceiver(mBattReceiver);
+            mBattReceiver = null;
+        }
+
+        super.onDestroy();
     }
 
     public boolean isChargingModeSupported(int mode) {
@@ -685,6 +716,16 @@ public class ChargingControlController extends LineageHealthFeature {
 
     @Override
     protected void onSettingsChanged(Uri uri) {
+        if (RECHARGE_LEVEL_URI.equals(uri)
+                || LIMIT_SCHEDULE_ENABLED_URI.equals(uri)
+                || LIMIT_START_TIME_URI.equals(uri)
+                || LIMIT_END_TIME_URI.equals(uri)) {
+            // These settings can be applied in place. Avoid resetting the provider, which may
+            // briefly restore unrestricted charging before the new configuration is applied.
+            updateBatteryInfo();
+            updateChargeControl();
+            return;
+        }
         handleSettingChange();
     }
 
@@ -706,6 +747,7 @@ public class ChargingControlController extends LineageHealthFeature {
         pw.println("  mIsEnabled: " + mIsEnabled);
         pw.println("  mBatteryPct: " + mBatteryPct);
         pw.println("  mIsPowerConnected: " + mIsPowerConnected);
+        pw.println("  mIsPhysicallyPlugged: " + mIsPhysicallyPlugged);
         pw.println("  mIsNotificationPosted: " + mChargingNotification.isPosted());
         pw.println("  mIsDoneNotification: " + mChargingNotification.isDoneNotification());
         pw.println("  mIsControlCancelledOnce: " + mIsControlCancelledOnce);
