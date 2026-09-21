@@ -268,7 +268,7 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     private int getRechargeLevel() {
-        final int maxRechargeLevel = Math.max(20, getLimit() - 5);
+        final int maxRechargeLevel = Math.max(20, getLimit() - 1);
         return Math.max(20, Math.min(getInt(
                 LineageSettings.System.CHARGING_CONTROL_RECHARGE_LEVEL,
                 maxRechargeLevel), maxRechargeLevel));
@@ -364,7 +364,7 @@ public class ChargingControlController extends LineageHealthFeature {
                 && setTargetTime(mDefaultTargetTime);
 
         putInt(LineageSettings.System.CHARGING_CONTROL_RECHARGE_LEVEL,
-                Math.max(20, mDefaultLimit - 5));
+                Math.max(20, mDefaultLimit - 1));
         putBoolean(LineageSettings.System.CHARGING_CONTROL_LIMIT_SCHEDULE_ENABLED, false);
         putInt(LineageSettings.System.CHARGING_CONTROL_LIMIT_START_TIME, mDefaultStartTime);
         putInt(LineageSettings.System.CHARGING_CONTROL_LIMIT_END_TIME, mDefaultTargetTime);
