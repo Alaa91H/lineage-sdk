@@ -12,8 +12,6 @@ import static lineageos.health.HealthInterface.MODE_MANUAL;
 import android.content.Context;
 import android.util.Log;
 
-import org.lineageos.platform.internal.R;
-
 import vendor.lineage.health.ChargingControlSupportedMode;
 import vendor.lineage.health.ChargingLimitInfo;
 import vendor.lineage.health.IChargingControl;
@@ -21,25 +19,16 @@ import vendor.lineage.health.IChargingControl;
 import java.io.PrintWriter;
 
 public class Limit extends ChargingControlProvider {
-    protected final int mChargingLimitMargin;
-
     public Limit(IChargingControl chargingControl, Context context) {
         super(context, chargingControl);
-
-        boolean isBypassSupported = isHALModeSupported(ChargingControlSupportedMode.BYPASS);
-        if (!isBypassSupported) {
-            mChargingLimitMargin = mContext.getResources().getInteger(
-                    R.integer.config_chargingControlBatteryRechargeMargin);
-        } else {
-            mChargingLimitMargin = 1;
-        }
-        Log.i(TAG, "isBypassSupported: " + isBypassSupported);
     }
 
     @Override
     protected boolean onBatteryChanged(float currentPct, int targetPct) {
-        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct);
-        return setChargingLimit(targetPct);
+        final int rechargeLevel = getRechargeLevel(targetPct);
+        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
+                + ", recharge level: " + rechargeLevel);
+        return setChargingLimit(targetPct, rechargeLevel);
     }
 
     @Override
@@ -54,18 +43,16 @@ public class Limit extends ChargingControlProvider {
 
     @Override
     protected void onReset() {
-        setChargingLimit(100);
+        setChargingLimit(100, 0);
     }
 
-    private boolean setChargingLimit(int targetPct) {
+    private boolean setChargingLimit(int targetPct, int rechargeLevel) {
         try {
-            if (mChargingControl.getChargingLimit().max != targetPct) {
+            final ChargingLimitInfo currentLimit = mChargingControl.getChargingLimit();
+            final int minPct = targetPct == 100 ? 0 : rechargeLevel;
+            if (currentLimit.max != targetPct || currentLimit.min != minPct) {
                 ChargingLimitInfo limit = new ChargingLimitInfo();
-                if (targetPct == 100) {
-                    limit.min = 0;
-                } else {
-                    limit.min = targetPct - mChargingLimitMargin;
-                }
+                limit.min = minPct;
                 limit.max = targetPct;
                 mChargingControl.setChargingLimit(limit);
             }
