@@ -324,18 +324,29 @@ public class ChargingControlController extends LineageHealthFeature {
             return;
         }
 
-        if (mLimitScheduleAlarmAt != 0) {
-            alarmManager.cancel(mLimitScheduleAlarmListener);
-            mLimitScheduleAlarmAt = 0;
-        }
-
         if (!isEnabled() || getMode() != MODE_LIMIT || !isLimitScheduleEnabled()) {
+            if (mLimitScheduleAlarmAt != 0) {
+                alarmManager.cancel(mLimitScheduleAlarmListener);
+                mLimitScheduleAlarmAt = 0;
+            }
             return;
         }
 
         final long nextBoundary = getNextLimitScheduleBoundary();
         if (nextBoundary == 0) {
+            if (mLimitScheduleAlarmAt != 0) {
+                alarmManager.cancel(mLimitScheduleAlarmListener);
+                mLimitScheduleAlarmAt = 0;
+            }
             return;
+        }
+
+        if (mLimitScheduleAlarmAt == nextBoundary) {
+            return;
+        }
+
+        if (mLimitScheduleAlarmAt != 0) {
+            alarmManager.cancel(mLimitScheduleAlarmListener);
         }
 
         alarmManager.setExact(AlarmManager.RTC_WAKEUP, nextBoundary,
