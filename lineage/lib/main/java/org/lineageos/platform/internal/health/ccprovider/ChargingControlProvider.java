@@ -9,8 +9,6 @@ import android.content.Context;
 import android.os.RemoteException;
 import android.util.Log;
 
-import lineageos.providers.LineageSettings;
-
 import vendor.lineage.health.IChargingControl;
 
 import java.io.PrintWriter;
@@ -20,9 +18,6 @@ public abstract class ChargingControlProvider {
     protected final Context mContext;
 
     protected static final String TAG = "LineageHealth";
-    private static final int MIN_RECHARGE_LEVEL = 20;
-    private static final int MIN_RECHARGE_GAP = 5;
-
     protected boolean isEnabled = false;
 
     ChargingControlProvider(Context context, IChargingControl chargingControl) {
@@ -30,11 +25,11 @@ public abstract class ChargingControlProvider {
         mChargingControl = chargingControl;
     }
 
-    public final boolean update(float batteryPct, int targetPct) {
+    public final boolean update(float batteryPct, int targetPct, int rechargeLevel) {
         if (!isEnabled) {
             return false;
         }
-        return onBatteryChanged(batteryPct, targetPct);
+        return onBatteryChanged(batteryPct, targetPct, rechargeLevel);
     }
 
     public final boolean update(float batteryPct, long startTime, long targetTime, int configMode) {
@@ -42,22 +37,6 @@ public abstract class ChargingControlProvider {
             return false;
         }
         return onBatteryChanged(batteryPct, startTime, targetTime, configMode);
-    }
-
-    /**
-     * Returns the configured absolute battery level at which charging should resume.
-     * The value is clamped to at least 20% and at least 5 percentage points below
-     * the active charging limit.
-     */
-    protected final int getRechargeLevel(int targetPct) {
-        final int maxRechargeLevel = Math.max(MIN_RECHARGE_LEVEL,
-                targetPct - MIN_RECHARGE_GAP);
-        final int configuredLevel = LineageSettings.System.getInt(
-                mContext.getContentResolver(),
-                LineageSettings.System.CHARGING_CONTROL_RECHARGE_LEVEL,
-                maxRechargeLevel);
-        return Math.max(MIN_RECHARGE_LEVEL,
-                Math.min(configuredLevel, maxRechargeLevel));
     }
 
     public final void reset() {
@@ -105,7 +84,7 @@ public abstract class ChargingControlProvider {
      * @param targetPct  The user-configured target charging limit
      * @return Whether a notification should be posted
      */
-    protected boolean onBatteryChanged(float currentPct, int targetPct) {
+    protected boolean onBatteryChanged(float currentPct, int targetPct, int rechargeLevel) {
         throw new RuntimeException("Unsupported operation");
     }
 
