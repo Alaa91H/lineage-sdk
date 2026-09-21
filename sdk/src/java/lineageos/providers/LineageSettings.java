@@ -1434,6 +1434,50 @@ public final class LineageSettings {
                 new InclusiveIntegerRangeValidator(70, 100);
 
         /**
+         * Battery level at which charging resumes while limit charging is active.
+         * The value is a percentage from 20 to 95.
+         */
+        public static final String CHARGING_CONTROL_RECHARGE_LEVEL =
+                "charging_control_recharge_level";
+
+        /** @hide */
+        public static final Validator CHARGING_CONTROL_RECHARGE_LEVEL_VALIDATOR =
+                new InclusiveIntegerRangeValidator(20, 95);
+
+        /**
+         * Whether limit charging should only be active during a user-defined time window.
+         * The value is boolean (1 or 0).
+         */
+        public static final String CHARGING_CONTROL_LIMIT_SCHEDULE_ENABLED =
+                "charging_control_limit_schedule_enabled";
+
+        /** @hide */
+        public static final Validator CHARGING_CONTROL_LIMIT_SCHEDULE_ENABLED_VALIDATOR =
+                sBooleanValidator;
+
+        /**
+         * Start time for the limit charging schedule.
+         * The value is represented as seconds from midnight.
+         */
+        public static final String CHARGING_CONTROL_LIMIT_START_TIME =
+                "charging_control_limit_start_time";
+
+        /** @hide */
+        public static final Validator CHARGING_CONTROL_LIMIT_START_TIME_VALIDATOR =
+                sSecondsFromMidnightValidator;
+
+        /**
+         * End time for the limit charging schedule.
+         * The value is represented as seconds from midnight.
+         */
+        public static final String CHARGING_CONTROL_LIMIT_END_TIME =
+                "charging_control_limit_end_time";
+
+        /** @hide */
+        public static final Validator CHARGING_CONTROL_LIMIT_END_TIME_VALIDATOR =
+                sSecondsFromMidnightValidator;
+
+        /**
          * Fast charging mode
          */
         public static final String FAST_CHARGE_MODE = "fast_charge_mode";
@@ -2213,6 +2257,14 @@ public final class LineageSettings {
             VALIDATORS.put(CHARGING_CONTROL_START_TIME, CHARGING_CONTROL_START_TIME_VALIDATOR);
             VALIDATORS.put(CHARGING_CONTROL_TARGET_TIME, CHARGING_CONTROL_TARGET_TIME_VALIDATOR);
             VALIDATORS.put(CHARGING_CONTROL_LIMIT, CHARGING_CONTROL_LIMIT_VALIDATOR);
+            VALIDATORS.put(CHARGING_CONTROL_RECHARGE_LEVEL,
+                    CHARGING_CONTROL_RECHARGE_LEVEL_VALIDATOR);
+            VALIDATORS.put(CHARGING_CONTROL_LIMIT_SCHEDULE_ENABLED,
+                    CHARGING_CONTROL_LIMIT_SCHEDULE_ENABLED_VALIDATOR);
+            VALIDATORS.put(CHARGING_CONTROL_LIMIT_START_TIME,
+                    CHARGING_CONTROL_LIMIT_START_TIME_VALIDATOR);
+            VALIDATORS.put(CHARGING_CONTROL_LIMIT_END_TIME,
+                    CHARGING_CONTROL_LIMIT_END_TIME_VALIDATOR);
             VALIDATORS.put(FAST_CHARGE_MODE, FAST_CHARGE_MODE_VALIDATOR);
             VALIDATORS.put(BATTERY_LIGHT_ENABLED, BATTERY_LIGHT_ENABLED_VALIDATOR);
             VALIDATORS.put(BATTERY_LIGHT_FULL_CHARGE_DISABLED,
