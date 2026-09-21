@@ -29,7 +29,6 @@ import java.io.PrintWriter;
 import java.util.Objects;
 
 public class Toggle extends ChargingControlProvider {
-    protected final int mChargingLimitMargin;
     private final int mChargingTimeMargin;
 
     private final boolean mToggleSetAlways = mContext.getResources().getBoolean(
@@ -68,16 +67,6 @@ public class Toggle extends ChargingControlProvider {
             Context context) {
         super(context, chargingControl);
 
-        boolean isBypassSupported = isHALModeSupported(
-                ChargingControlSupportedMode.BYPASS | ChargingControlSupportedMode.TOGGLE);
-        if (!isBypassSupported) {
-            mChargingLimitMargin = mContext.getResources().getInteger(
-                    R.integer.config_chargingControlBatteryRechargeMargin);
-        } else {
-            mChargingLimitMargin = 1;
-        }
-        Log.i(TAG, "isBypassSupported: " + isBypassSupported);
-
         mChargingTimeMargin = mContext.getResources().getInteger(
                 R.integer.config_chargingControlTimeMargin) * 60 * 1000;
     }
@@ -94,9 +83,10 @@ public class Toggle extends ChargingControlProvider {
 
     @Override
     protected boolean onBatteryChanged(float currentPct, int targetPct) {
-        mIsLimitSet = shouldStopCharging(currentPct, targetPct);
-        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct +
-                ", limit set: " + mIsLimitSet);
+        final int rechargeLevel = getRechargeLevel(targetPct);
+        mIsLimitSet = shouldStopCharging(currentPct, targetPct, rechargeLevel);
+        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
+                + ", recharge level: " + rechargeLevel + ", limit set: " + mIsLimitSet);
         return setChargingEnabled(!mIsLimitSet);
     }
 
@@ -245,12 +235,12 @@ public class Toggle extends ChargingControlProvider {
         pw.println("  mSavedTargetTime: " + msToString(mContext, mSavedTargetTime));
         pw.println("  mEstimatedFullTime: " + msToHMSString(mEstimatedFullTime));
         pw.println("  mStage: " + mStage);
-        pw.println("  mChargeLimitMargin: " + mChargingLimitMargin);
     }
 
-    private boolean shouldStopCharging(float currentPct, int targetPct) {
+    private boolean shouldStopCharging(float currentPct, int targetPct, int rechargeLevel) {
         if (mIsLimitSet) {
-            return currentPct >= targetPct - mChargingLimitMargin;
+            // Resume as soon as the battery reaches the configured recharge level.
+            return currentPct > rechargeLevel;
         }
         return currentPct >= targetPct;
     }
