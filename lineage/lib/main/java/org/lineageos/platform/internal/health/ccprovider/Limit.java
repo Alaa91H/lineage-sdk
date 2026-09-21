@@ -24,8 +24,7 @@ public class Limit extends ChargingControlProvider {
     }
 
     @Override
-    protected boolean onBatteryChanged(float currentPct, int targetPct) {
-        final int rechargeLevel = getRechargeLevel(targetPct);
+    protected boolean onBatteryChanged(float currentPct, int targetPct, int rechargeLevel) {
         Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
                 + ", recharge level: " + rechargeLevel);
         return setChargingLimit(targetPct, rechargeLevel);
