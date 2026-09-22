@@ -4,6 +4,8 @@ on:
   pull_request:
     branches:
       - cnb
+      - "perf/charging-control-*"
+      - "fix/charging-control-*"
     paths:
       - "lineage/lib/main/java/org/lineageos/platform/internal/health/ccprovider/**"
       - "tools/validate_charging_control_provider.py"
