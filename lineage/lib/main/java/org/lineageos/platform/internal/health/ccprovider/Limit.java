@@ -19,14 +19,18 @@ import vendor.lineage.health.IChargingControl;
 import java.io.PrintWriter;
 
 public class Limit extends ChargingControlProvider {
+    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+
     public Limit(IChargingControl chargingControl, Context context) {
         super(context, chargingControl);
     }
 
     @Override
     protected boolean onBatteryChanged(float currentPct, int targetPct, int rechargeLevel) {
-        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
-                + ", recharge level: " + rechargeLevel);
+        if (DEBUG) {
+            Log.d(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
+                    + ", recharge level: " + rechargeLevel);
+        }
         return setChargingLimit(targetPct, rechargeLevel);
     }
 

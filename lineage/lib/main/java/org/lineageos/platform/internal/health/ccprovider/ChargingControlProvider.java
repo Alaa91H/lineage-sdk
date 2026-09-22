@@ -156,9 +156,12 @@ public abstract class ChargingControlProvider {
      */
     public final boolean isHALModeSupported(int mode) {
         try {
-            Log.i(TAG, "isSupported mode called, param: " + mode + ", supported: "
-                    + mChargingControl.getSupportedMode());
-            return (mChargingControl.getSupportedMode() & mode) == mode;
+            final int supportedMode = mChargingControl.getSupportedMode();
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "isSupported mode called, param: " + mode
+                        + ", supported: " + supportedMode);
+            }
+            return (supportedMode & mode) == mode;
         } catch (RemoteException e) {
             Log.e(TAG, "Unable to get supported mode from HAL!", e);
             return false;
