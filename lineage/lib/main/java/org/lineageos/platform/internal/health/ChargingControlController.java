@@ -46,6 +46,7 @@ public class ChargingControlController extends LineageHealthFeature {
     private ChargingControlNotification mChargingNotification;
     private LineageHealthBatteryBroadcastReceiver mBattReceiver;
     private BroadcastReceiver mAlarmBroadcastReceiver;
+    private BroadcastReceiver mCancelOnceDisconnectReceiver;
     private boolean mIsEnabled = false;
 
     // Defaults
@@ -173,13 +174,27 @@ public class ChargingControlController extends LineageHealthFeature {
             return false;
         }
 
-        mCurrentProvider = getProviderForMode(mode);
-
-        if (mCurrentProvider == null) {
+        if (!switchProviderForMode(mode)) {
             return false;
         }
 
         putInt(LineageSettings.System.CHARGING_CONTROL_MODE, mode);
+        return true;
+    }
+
+    private boolean switchProviderForMode(int mode) {
+        final ChargingControlProvider provider = getProviderForMode(mode);
+        if (provider == null) {
+            return false;
+        }
+
+        if (provider != mCurrentProvider) {
+            if (mCurrentProvider != null) {
+                mCurrentProvider.disable();
+            }
+            mCurrentProvider = provider;
+            mCurrentProvider.reset();
+        }
         return true;
     }
 
@@ -455,6 +470,11 @@ public class ChargingControlController extends LineageHealthFeature {
             mBattReceiver = null;
         }
 
+        if (mCancelOnceDisconnectReceiver != null) {
+            mContext.unregisterReceiver(mCancelOnceDisconnectReceiver);
+            mCancelOnceDisconnectReceiver = null;
+        }
+
         super.onDestroy();
     }
 
@@ -484,20 +504,24 @@ public class ChargingControlController extends LineageHealthFeature {
 
         mIsControlCancelledOnce = true;
 
-        if (mCurrentProvider.requiresBatteryLevelMonitoring()) {
-            IntentFilter disconnectFilter = new IntentFilter(
+        if (mCurrentProvider.requiresBatteryLevelMonitoring()
+                && mCancelOnceDisconnectReceiver == null) {
+            final IntentFilter disconnectFilter = new IntentFilter(
                     Intent.ACTION_POWER_DISCONNECTED);
 
-            // Register a one-time receiver that resets internal state on power
-            // disconnection
-            mContext.registerReceiver(new BroadcastReceiver() {
+            // Register a one-time receiver that resets internal state on power disconnection.
+            // Keep an explicit reference so repeated cancellations cannot stack receivers and
+            // feature teardown can always unregister it.
+            mCancelOnceDisconnectReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     Log.i(TAG, "Power disconnected, reset internal states");
                     resetInternalState();
                     mContext.unregisterReceiver(this);
+                    mCancelOnceDisconnectReceiver = null;
                 }
-            }, disconnectFilter);
+            };
+            mContext.registerReceiver(mCancelOnceDisconnectReceiver, disconnectFilter);
         }
 
         mCurrentProvider.disable();
@@ -659,21 +683,6 @@ public class ChargingControlController extends LineageHealthFeature {
         }
     }
 
-    /**
-     * Whether the current charging control mode supports supports the mode.
-     * Available modes:
-     *     - ${@link lineageos.health.HealthInterface#MODE_AUTO}
-     *     - ${@link lineageos.health.HealthInterface#MODE_MANUAL}
-     *     - ${@link lineageos.health.HealthInterface#MODE_LIMIT}
-     */
-    private boolean isProvideSupportCCMode(int mode) {
-        if (mCurrentProvider == null) {
-            return false;
-        }
-
-        return mCurrentProvider.isChargingControlModeSupported(mode);
-    }
-
     private void handleSettingChange() {
         int mode = getMode();
 
@@ -698,10 +707,14 @@ public class ChargingControlController extends LineageHealthFeature {
             }
         }
 
-        if (!isProvideSupportCCMode(mode)) {
-            Log.e(TAG, "Current provider does not support mode: " + mode
+        if (!switchProviderForMode(mode)) {
+            Log.e(TAG, "No provider supports mode: " + mode
                     + ", setting to default mode");
-            setMode(mDefaultMode);
+            if (!setMode(mDefaultMode)) {
+                Log.e(TAG, "Unable to switch to default charging control mode");
+                return;
+            }
+            mode = mDefaultMode;
         }
 
         // Reset internal states
