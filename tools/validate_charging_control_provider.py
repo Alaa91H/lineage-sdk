@@ -5,10 +5,12 @@ ROOT = Path(__file__).resolve().parents[1]
 TOGGLE = ROOT / "lineage/lib/main/java/org/lineageos/platform/internal/health/ccprovider/Toggle.java"
 LIMIT = ROOT / "lineage/lib/main/java/org/lineageos/platform/internal/health/ccprovider/Limit.java"
 PROVIDER = ROOT / "lineage/lib/main/java/org/lineageos/platform/internal/health/ccprovider/ChargingControlProvider.java"
+CONTROLLER = ROOT / "lineage/lib/main/java/org/lineageos/platform/internal/health/ChargingControlController.java"
 
 toggle = TOGGLE.read_text(encoding="utf-8")
 limit = LIMIT.read_text(encoding="utf-8")
 provider = PROVIDER.read_text(encoding="utf-8")
+controller = CONTROLLER.read_text(encoding="utf-8")
 
 required_toggle = (
     "ESTIMATE_REFRESH_INTERVAL_MS = 60_000L",
@@ -71,4 +73,20 @@ if support.count("mChargingControl.getSupportedMode()") != 1:
 if 'Log.d(TAG, "isSupported mode called' not in provider:
     raise SystemExit("HAL capability diagnostics must remain DEBUG-level")
 
-print("Charging Control provider hot-path validation passed")
+for token in (
+    "SECONDS_PER_DAY = 24 * 60 * 60",
+    "time < 0 || time >= SECONDS_PER_DAY",
+    "sanitizeMode(getMode())",
+    'sanitizePercent(getLimit(), mDefaultLimit, "charging limit")',
+    'sanitizeSecondOfDay(\n                getStartTime(), mDefaultStartTime, "charging start time")',
+    'sanitizeSecondOfDay(\n                getTargetTime(), mDefaultTargetTime, "charging target time")',
+    '"limit schedule start time"',
+    '"limit schedule end time"',
+):
+    if token not in controller:
+        raise SystemExit(f"Charging Control runtime config invariant missing: {token}")
+
+if "time > 24 * 60 * 60" in controller:
+    raise SystemExit("Charging Control must reject 24:00:00 as an invalid second-of-day value")
+
+print("Charging Control provider and runtime config validation passed")
