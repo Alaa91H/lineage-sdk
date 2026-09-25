@@ -1,0 +1,37 @@
+name: Charging Control provider validation
+
+on:
+  pull_request:
+    branches:
+      - cnb
+      - "perf/charging-control-*"
+      - "fix/charging-control-*"
+    paths:
+      - "lineage/lib/main/java/org/lineageos/platform/internal/health/ccprovider/**"
+      - "tools/validate_charging_control_provider.py"
+      - ".github/workflows/charging-control-provider-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Charging Control provider invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Validate checker syntax
+        run: python3 -m py_compile tools/validate_charging_control_provider.py
+
+      - name: Validate provider hot path
+        run: python3 tools/validate_charging_control_provider.py
+
+      - name: Check patch whitespace
+        run: git diff --check HEAD^ HEAD
