@@ -1,0 +1,38 @@
+name: Charging Control validation
+
+on:
+  pull_request:
+    branches:
+      - cnb
+      - "fix/charging-control-*"
+      - "perf/charging-control-*"
+    paths:
+      - "lineage/lib/main/java/org/lineageos/platform/internal/health/**"
+      - "sdk/src/java/lineageos/providers/LineageSettings.java"
+      - "tools/validate_charging_control.py"
+      - ".github/workflows/charging-control-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Charging Control invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Validate checker syntax
+        run: python3 -m py_compile tools/validate_charging_control.py
+
+      - name: Validate Charging Control
+        run: python3 tools/validate_charging_control.py
+
+      - name: Check patch whitespace
+        run: git diff --check HEAD^ HEAD
