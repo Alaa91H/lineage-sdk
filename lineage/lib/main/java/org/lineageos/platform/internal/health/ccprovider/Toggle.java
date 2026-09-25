@@ -18,6 +18,7 @@ import android.content.IntentFilter;
 import android.os.BatteryManager;
 import android.os.BatteryStatsManager;
 import android.os.BatteryUsageStats;
+import android.os.SystemClock;
 import android.util.Log;
 
 import org.lineageos.platform.internal.R;
@@ -26,16 +27,22 @@ import vendor.lineage.health.ChargingControlSupportedMode;
 import vendor.lineage.health.IChargingControl;
 
 import java.io.PrintWriter;
-import java.util.Objects;
 
 public class Toggle extends ChargingControlProvider {
+    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final long ESTIMATE_REFRESH_INTERVAL_MS = 60_000L;
+
     private final int mChargingTimeMargin;
+    private final BatteryStatsManager mBatteryStatsManager;
 
     private final boolean mToggleSetAlways = mContext.getResources().getBoolean(
             R.bool.config_chargingControlToggleSetAlways);
     private boolean mIsLimitSet;
     private long mSavedTargetTime;
     private long mEstimatedFullTime;
+    private long mLastEstimateQueryElapsed;
+    private long mCachedChargeTimeRemaining = -1;
+    private boolean mWasPlugged;
     private chgCtrlStage mStage = chgCtrlStage.STAGE_NONE;
 
     private enum chgCtrlStage {
@@ -69,6 +76,7 @@ public class Toggle extends ChargingControlProvider {
 
         mChargingTimeMargin = mContext.getResources().getInteger(
                 R.integer.config_chargingControlTimeMargin) * 60 * 1000;
+        mBatteryStatsManager = mContext.getSystemService(BatteryStatsManager.class);
     }
 
     @Override
@@ -84,8 +92,10 @@ public class Toggle extends ChargingControlProvider {
     @Override
     protected boolean onBatteryChanged(float currentPct, int targetPct, int rechargeLevel) {
         mIsLimitSet = shouldStopCharging(currentPct, targetPct, rechargeLevel);
-        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
-                + ", recharge level: " + rechargeLevel + ", limit set: " + mIsLimitSet);
+        if (DEBUG) {
+            Log.d(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
+                    + ", recharge level: " + rechargeLevel + ", limit set: " + mIsLimitSet);
+        }
         return setChargingEnabled(!mIsLimitSet);
     }
 
@@ -110,12 +120,19 @@ public class Toggle extends ChargingControlProvider {
         final long currentTime = System.currentTimeMillis();
         chgCtrlStage stage = mStage;
 
-        IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
-        Intent batteryStatus = mContext.registerReceiver(null, ifilter, Context.RECEIVER_EXPORTED);
-        boolean plugged = batteryStatus.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) != 0;
+        final IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        final Intent batteryStatus =
+                mContext.registerReceiver(null, filter, Context.RECEIVER_EXPORTED);
+        final boolean plugged = batteryStatus != null
+                && batteryStatus.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+
+        if (plugged != mWasPlugged) {
+            mWasPlugged = plugged;
+            invalidateChargeTimeEstimate();
+        }
 
         if (startTime > currentTime && stage != chgCtrlStage.STAGE_CONTINUE) {
-            // Not yet entering user configured time frame
+            // Not yet entering user configured time frame.
             return chgCtrlStage.STAGE_NONE;
         }
 
@@ -123,50 +140,78 @@ public class Toggle extends ChargingControlProvider {
                 || mSavedTargetTime >= currentTime)) {
             Log.i(TAG, "User changed target time, reassign it");
             mSavedTargetTime = targetTime;
+            invalidateChargeTimeEstimate();
             stage = chgCtrlStage.STAGE_INITIAL;
         }
 
-        final BatteryUsageStats batteryUsageStats = Objects.requireNonNull(
-                mContext.getSystemService(
-                        BatteryStatsManager.class)).getBatteryUsageStats();
-        long remaining = batteryUsageStats.getChargeTimeRemainingMs();
-        remaining += mChargingTimeMargin;
-        Log.i(TAG, "Current estimated time to full: " + msToHMSString(remaining));
-
-        long deltaTime = targetTime - currentTime;
-        Log.i(TAG, "Current time to target: " + msToHMSString(deltaTime));
+        final long deltaTime = targetTime - currentTime;
+        if (DEBUG) {
+            Log.d(TAG, "Current time to target: " + msToHMSString(deltaTime));
+        }
 
         switch (stage) {
             case STAGE_NONE, STAGE_INITIAL -> {
-                if (!plugged || batteryPct < CHARGE_CTRL_MIN_LEVEL || remaining == -1) {
-                    // NONE/INITIAL -> INITIAL: If battery level < 80%
+                if (!plugged || batteryPct < CHARGE_CTRL_MIN_LEVEL) {
+                    return chgCtrlStage.STAGE_INITIAL;
+                }
+
+                final long remaining = getEstimatedChargeTimeRemaining();
+                if (remaining < 0) {
                     return chgCtrlStage.STAGE_INITIAL;
                 } else if (deltaTime > remaining) {
-                    // NONE/INITIAL -> WAITING: battery level >= 80% && Have enough time waiting
+                    // NONE/INITIAL -> WAITING: battery level >= 80% && have enough time waiting.
                     mEstimatedFullTime = remaining;
                     return chgCtrlStage.STAGE_WAITING;
                 } else {
-                    // NONE/INITIAL -> CONTINUE: battery level >= 80% && Not enough time waiting
+                    // NONE/INITIAL -> CONTINUE: battery level >= 80% && not enough time waiting.
                     return chgCtrlStage.STAGE_CONTINUE;
                 }
             }
             case STAGE_WAITING -> {
-                if (deltaTime <= mEstimatedFullTime) {
-                    return chgCtrlStage.STAGE_CONTINUE;
-                } else {
-                    return chgCtrlStage.STAGE_WAITING;
-                }
+                return deltaTime <= mEstimatedFullTime
+                        ? chgCtrlStage.STAGE_CONTINUE : chgCtrlStage.STAGE_WAITING;
             }
             case STAGE_CONTINUE -> {
-                if (!plugged) {
-                    return chgCtrlStage.STAGE_INITIAL;
-                }
-                return chgCtrlStage.STAGE_CONTINUE;
+                return plugged ? chgCtrlStage.STAGE_CONTINUE : chgCtrlStage.STAGE_INITIAL;
             }
         }
 
         Log.e(TAG, "Possible bug: code reaches out of switch case");
         return chgCtrlStage.STAGE_NONE;
+    }
+
+    private long getEstimatedChargeTimeRemaining() {
+        final long now = SystemClock.elapsedRealtime();
+        if (mLastEstimateQueryElapsed != 0
+                && now - mLastEstimateQueryElapsed < ESTIMATE_REFRESH_INTERVAL_MS) {
+            return mCachedChargeTimeRemaining;
+        }
+
+        mLastEstimateQueryElapsed = now;
+        if (mBatteryStatsManager == null) {
+            mCachedChargeTimeRemaining = -1;
+            return -1;
+        }
+
+        try {
+            final BatteryUsageStats stats = mBatteryStatsManager.getBatteryUsageStats();
+            final long estimate = stats.getChargeTimeRemainingMs();
+            mCachedChargeTimeRemaining =
+                    estimate < 0 ? -1 : estimate + mChargingTimeMargin;
+            if (DEBUG) {
+                Log.d(TAG, "Current estimated time to full: "
+                        + msToHMSString(mCachedChargeTimeRemaining));
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Unable to query charge time estimate", e);
+            mCachedChargeTimeRemaining = -1;
+        }
+        return mCachedChargeTimeRemaining;
+    }
+
+    private void invalidateChargeTimeEstimate() {
+        mLastEstimateQueryElapsed = 0;
+        mCachedChargeTimeRemaining = -1;
     }
 
     @Override
@@ -178,9 +223,11 @@ public class Toggle extends ChargingControlProvider {
             return false;
         }
 
-        chgCtrlStage prevStage = mStage;
+        final chgCtrlStage prevStage = mStage;
         mStage = getNextStage(batteryPct, startTime, targetTime);
-        Log.i(TAG, "State change: " + prevStage + " -> " + mStage);
+        if (prevStage != mStage) {
+            Log.i(TAG, "State change: " + prevStage + " -> " + mStage);
+        }
 
         return onStage(mStage);
     }
@@ -216,6 +263,8 @@ public class Toggle extends ChargingControlProvider {
             mIsLimitSet = false;
             mSavedTargetTime = 0;
             mEstimatedFullTime = 0;
+            mWasPlugged = false;
+            invalidateChargeTimeEstimate();
             mStage = chgCtrlStage.STAGE_NONE;
         } catch (Exception e) {
             Log.e(TAG, "Failed to set charging enabled", e);
