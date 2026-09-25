@@ -48,4 +48,16 @@ if stale_calls:
 if "return service.getChargingControlLimit();" not in source:
     raise SystemExit("Charging limit call must use the local service reference")
 
+limit_start = source.find("public int getLimit()")
+limit_end = source.find("/**\n     * Sets the charging control limit", limit_start)
+if limit_start < 0 or limit_end < 0:
+    raise SystemExit("Unable to isolate HealthInterface.getLimit")
+limit_method = source[limit_start:limit_end]
+if limit_method.count("return 100;") != 2:
+    raise SystemExit(
+        "Charging limit fallback must remain 100 for unavailable service and RemoteException"
+    )
+if "return 0;" in limit_method:
+    raise SystemExit("Charging limit fallback must stay within the supported 70-100 range")
+
 print("HealthInterface binder recovery validation passed")
