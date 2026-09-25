@@ -67,16 +67,17 @@ public class HealthInterface {
     }
 
     /** @hide **/
-    public static IHealthInterface getService() {
-        if (sService != null) {
+    public static synchronized IHealthInterface getService() {
+        if (sService != null && sService.asBinder().isBinderAlive()) {
             return sService;
         }
-        IBinder b = ServiceManager.getService(LineageContextConstants.LINEAGE_HEALTH_INTERFACE);
-        sService = IHealthInterface.Stub.asInterface(b);
+
+        IBinder binder = ServiceManager.getService(
+                LineageContextConstants.LINEAGE_HEALTH_INTERFACE);
+        sService = IHealthInterface.Stub.asInterface(binder);
 
         if (sService == null) {
-            Log.e(TAG, "null health service, SAD!");
-            return null;
+            Log.e(TAG, "Health interface service is unavailable");
         }
 
         return sService;
@@ -85,12 +86,10 @@ public class HealthInterface {
     /**
      * @return true if service is valid
      */
-    private boolean checkService() {
-        if (sService == null) {
-            Log.w(TAG, "not connected to LineageHardwareManagerService");
-            return false;
+    private static synchronized void clearService(IHealthInterface service) {
+        if (sService == service) {
+            sService = null;
         }
-        return true;
     }
 
     /**
@@ -99,13 +98,17 @@ public class HealthInterface {
      * @return true if charging control is supported
      */
     public boolean isChargingControlSupported() {
-        try {
-            return checkService() && sService.isChargingControlSupported();
-        } catch (RemoteException e) {
-            Log.e(TAG, e.getLocalizedMessage(), e);
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
         }
-
-        return false;
+        try {
+            return service.isChargingControlSupported();
+        } catch (RemoteException e) {
+            clearService(service);
+            Log.e(TAG, e.getLocalizedMessage(), e);
+            return false;
+        }
     }
 
     /**
@@ -129,9 +132,14 @@ public class HealthInterface {
      * @return whether charging control has been enabled
      */
     public boolean getEnabled() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.getChargingControlEnabled();
+            return service.getChargingControlEnabled();
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -143,9 +151,14 @@ public class HealthInterface {
      * @return true if the enabled status was successfully set
      */
     public boolean setEnabled(boolean enabled) {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.setChargingControlEnabled(enabled);
+            return service.setChargingControlEnabled(enabled);
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -156,9 +169,14 @@ public class HealthInterface {
      * @return id of the charging control mode
      */
     public int getMode() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return MODE_NONE;
+        }
         try {
-            return checkService() ? sService.getChargingControlMode() : MODE_NONE;
+            return service.getChargingControlMode();
         } catch (RemoteException e) {
+            clearService(service);
             return MODE_NONE;
         }
     }
@@ -170,9 +188,14 @@ public class HealthInterface {
      * @return true if the mode was successfully set
      */
     public boolean setMode(int mode) {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.setChargingControlMode(mode);
+            return service.setChargingControlMode(mode);
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -183,9 +206,14 @@ public class HealthInterface {
      * @return the seconds of the day of the start time
      */
     public int getStartTime() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return 0;
+        }
         try {
-            return checkService() ? sService.getChargingControlStartTime() : 0;
+            return service.getChargingControlStartTime();
         } catch (RemoteException e) {
+            clearService(service);
             return 0;
         }
     }
@@ -197,9 +225,14 @@ public class HealthInterface {
      * @return true if the start time was successfully set
      */
     public boolean setStartTime(int time) {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.setChargingControlStartTime(time);
+            return service.setChargingControlStartTime(time);
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -210,9 +243,14 @@ public class HealthInterface {
      * @return the seconds of the day of the target time
      */
     public int getTargetTime() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return 0;
+        }
         try {
-            return checkService() ? sService.getChargingControlTargetTime() : 0;
+            return service.getChargingControlTargetTime();
         } catch (RemoteException e) {
+            clearService(service);
             return 0;
         }
     }
@@ -224,9 +262,14 @@ public class HealthInterface {
      * @return true if the target time was successfully set
      */
     public boolean setTargetTime(int time) {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.setChargingControlTargetTime(time);
+            return service.setChargingControlTargetTime(time);
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -237,10 +280,15 @@ public class HealthInterface {
      * @return the charging control limit
      */
     public int getLimit() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return 100;
+        }
         try {
-            return checkService() ? sService.getChargingControlLimit() : 100;
+            return service.getChargingControlLimit();
         } catch (RemoteException e) {
-            return 0;
+            clearService(service);
+            return 100;
         }
     }
 
@@ -251,9 +299,14 @@ public class HealthInterface {
      * @return true if the limit was successfully set
      */
     public boolean setLimit(int limit) {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.setChargingControlLimit(limit);
+            return service.setChargingControlLimit(limit);
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -264,9 +317,14 @@ public class HealthInterface {
      * @return true if the setting was successfully reset
      */
     public boolean reset() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.resetChargingControl();
+            return service.resetChargingControl();
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -277,9 +335,14 @@ public class HealthInterface {
      * @return true if the charging control bypasses battery
      */
     public boolean allowFineGrainedSettings() {
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
+        }
         try {
-            return checkService() && sService.allowFineGrainedSettings();
+            return service.allowFineGrainedSettings();
         } catch (RemoteException e) {
+            clearService(service);
             return false;
         }
     }
@@ -290,13 +353,17 @@ public class HealthInterface {
      * @return true if fast charge is supported
      */
     public boolean isFastChargeSupported() {
-        try {
-            return checkService() && sService.isFastChargeSupported();
-        } catch (RemoteException e) {
-            Log.e(TAG, e.getLocalizedMessage(), e);
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
         }
-
-        return false;
+        try {
+            return service.isFastChargeSupported();
+        } catch (RemoteException e) {
+            clearService(service);
+            Log.e(TAG, e.getLocalizedMessage(), e);
+            return false;
+        }
     }
 
     /**
@@ -305,13 +372,17 @@ public class HealthInterface {
      * @return true supported fast charge modes
      */
     public int[] getSupportedFastChargeModes() {
-        try {
-            return checkService() ? sService.getSupportedFastChargeModes() : new int[0];
-        } catch (RemoteException e) {
-            Log.e(TAG, e.getLocalizedMessage(), e);
+        IHealthInterface service = getService();
+        if (service == null) {
+            return new int[0];
         }
-
-        return new int[0];
+        try {
+            return service.getSupportedFastChargeModes();
+        } catch (RemoteException e) {
+            clearService(service);
+            Log.e(TAG, e.getLocalizedMessage(), e);
+            return new int[0];
+        }
     }
 
     /**
@@ -320,13 +391,17 @@ public class HealthInterface {
      * @return true current fast charge mode
      */
     public int getFastChargeMode() {
-        try {
-            return checkService() ? sService.getFastChargeMode() : 0;
-        } catch (RemoteException e) {
-            Log.e(TAG, e.getLocalizedMessage(), e);
+        IHealthInterface service = getService();
+        if (service == null) {
+            return 0;
         }
-
-        return 0;
+        try {
+            return service.getFastChargeMode();
+        } catch (RemoteException e) {
+            clearService(service);
+            Log.e(TAG, e.getLocalizedMessage(), e);
+            return 0;
+        }
     }
 
     /**
@@ -336,12 +411,16 @@ public class HealthInterface {
      * @return true if fast charge was set
      */
     public boolean setFastChargeMode(int mode) {
-        try {
-            return checkService() && sService.setFastChargeMode(mode);
-        } catch (RemoteException e) {
-            Log.e(TAG, e.getLocalizedMessage(), e);
+        IHealthInterface service = getService();
+        if (service == null) {
+            return false;
         }
-
-        return false;
+        try {
+            return service.setFastChargeMode(mode);
+        } catch (RemoteException e) {
+            clearService(service);
+            Log.e(TAG, e.getLocalizedMessage(), e);
+            return false;
+        }
     }
 }

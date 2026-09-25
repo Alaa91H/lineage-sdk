@@ -371,7 +371,7 @@ public final class LineageSettings {
             new InclusiveIntegerRangeValidator(Integer.MIN_VALUE, Integer.MAX_VALUE);
 
     private static final Validator sSecondsFromMidnightValidator =
-            new InclusiveIntegerRangeValidator(0, 86400);
+            new InclusiveIntegerRangeValidator(0, 86399);
 
     private static final Validator sHardwareKeyActionvalidator =
             new InclusiveIntegerRangeValidator(0, 19);
