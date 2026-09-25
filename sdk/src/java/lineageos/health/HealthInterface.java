@@ -240,7 +240,7 @@ public class HealthInterface {
         try {
             return checkService() ? sService.getChargingControlLimit() : 100;
         } catch (RemoteException e) {
-            return 0;
+            return 100;
         }
     }
 
