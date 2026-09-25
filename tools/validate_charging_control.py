@@ -86,6 +86,10 @@ for forbidden in (
         )
 
 require(settings,
+        "private static final Validator sSecondsFromMidnightValidator =\n"
+        "            new InclusiveIntegerRangeValidator(0, 86399);",
+        "LineageSettings")
+require(settings,
         "CHARGING_CONTROL_RECHARGE_LEVEL_VALIDATOR =\n                new InclusiveIntegerRangeValidator(20, 99);",
         "LineageSettings")
 require(settings,
