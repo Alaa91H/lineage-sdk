@@ -57,6 +57,10 @@ public class Limit extends ChargingControlProvider {
             }
             return true;
         } catch (Exception e) {
+            // The HAL state is unknown after an exception. Invalidate the cache so the next
+            // battery update retries instead of assuming the requested limit was applied.
+            mAppliedMin = UNKNOWN_LIMIT;
+            mAppliedMax = UNKNOWN_LIMIT;
             Log.e(TAG, "Failed to set charging limit", e);
             return false;
         }
@@ -80,5 +84,7 @@ public class Limit extends ChargingControlProvider {
     @Override
     public void dump(PrintWriter pw) {
         pw.println("Provider: " + getClass().getName());
+        pw.println("  mAppliedMin: " + mAppliedMin);
+        pw.println("  mAppliedMax: " + mAppliedMax);
     }
 }

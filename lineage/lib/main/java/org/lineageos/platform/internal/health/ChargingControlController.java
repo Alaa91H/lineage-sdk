@@ -41,11 +41,18 @@ import java.io.PrintWriter;
 import java.util.Calendar;
 
 public class ChargingControlController extends LineageHealthFeature {
+    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final int SECONDS_PER_DAY = 24 * 60 * 60;
+    private static final int MIN_PERCENT = 0;
+    private static final int MAX_PERCENT = 100;
+
     private final IChargingControl mChargingControl;
     private final ContentResolver mContentResolver;
+    private final AlarmManager mAlarmManager;
     private ChargingControlNotification mChargingNotification;
     private LineageHealthBatteryBroadcastReceiver mBattReceiver;
     private BroadcastReceiver mAlarmBroadcastReceiver;
+    private BroadcastReceiver mCancelOnceDisconnectReceiver;
     private boolean mIsEnabled = false;
 
     // Defaults
@@ -78,6 +85,7 @@ public class ChargingControlController extends LineageHealthFeature {
     // Internal state
     private float mBatteryPct;
     private boolean mIsPowerConnected;
+    private boolean mIsPhysicallyPlugged;
     private boolean mIsControlCancelledOnce;
     private long mLimitScheduleAlarmAt;
     private final AlarmManager.OnAlarmListener mLimitScheduleAlarmListener = () -> {
@@ -104,6 +112,7 @@ public class ChargingControlController extends LineageHealthFeature {
         super(context, handler);
 
         mContentResolver = mContext.getContentResolver();
+        mAlarmManager = mContext.getSystemService(AlarmManager.class);
         mChargingControl = IChargingControl.Stub.asInterface(
                 ServiceManager.waitForDeclaredService(
                         IChargingControl.DESCRIPTOR + "/default"));
@@ -131,7 +140,8 @@ public class ChargingControlController extends LineageHealthFeature {
         mLimit = new Limit(mChargingControl, mContext);
         mToggle = new Toggle(mChargingControl, mContext);
 
-        mCurrentProvider = getProviderForMode(getMode());
+        mConfig = readConfig();
+        mCurrentProvider = getProviderForMode(mConfig.mode);
         if (mCurrentProvider == null) {
             if (mLimit.isSupported()) {
                 mCurrentProvider = mLimit;
@@ -157,6 +167,7 @@ public class ChargingControlController extends LineageHealthFeature {
 
     public boolean setEnabled(boolean enabled) {
         putBoolean(LineageSettings.System.CHARGING_CONTROL_ENABLED, enabled);
+        mConfig = null;
         return true;
     }
 
@@ -171,13 +182,28 @@ public class ChargingControlController extends LineageHealthFeature {
             return false;
         }
 
-        mCurrentProvider = getProviderForMode(mode);
-
-        if (mCurrentProvider == null) {
+        if (!switchProviderForMode(mode)) {
             return false;
         }
 
         putInt(LineageSettings.System.CHARGING_CONTROL_MODE, mode);
+        mConfig = null;
+        return true;
+    }
+
+    private boolean switchProviderForMode(int mode) {
+        final ChargingControlProvider provider = getProviderForMode(mode);
+        if (provider == null) {
+            return false;
+        }
+
+        if (provider != mCurrentProvider) {
+            if (mCurrentProvider != null) {
+                mCurrentProvider.disable();
+            }
+            mCurrentProvider = provider;
+            mCurrentProvider.reset();
+        }
         return true;
     }
 
@@ -215,11 +241,12 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public boolean setStartTime(int time) {
-        if (time < 0 || time > 24 * 60 * 60) {
+        if (time < 0 || time >= SECONDS_PER_DAY) {
             return false;
         }
 
         putInt(LineageSettings.System.CHARGING_CONTROL_START_TIME, time);
+        mConfig = null;
         return true;
     }
 
@@ -230,11 +257,12 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public boolean setTargetTime(int time) {
-        if (time < 0 || time > 24 * 60 * 60) {
+        if (time < 0 || time >= SECONDS_PER_DAY) {
             return false;
         }
 
         putInt(LineageSettings.System.CHARGING_CONTROL_TARGET_TIME, time);
+        mConfig = null;
         return true;
     }
 
@@ -250,6 +278,7 @@ public class ChargingControlController extends LineageHealthFeature {
         }
 
         putInt(LineageSettings.System.CHARGING_CONTROL_LIMIT, limit);
+        mConfig = null;
         return true;
     }
 
@@ -374,6 +403,11 @@ public class ChargingControlController extends LineageHealthFeature {
     private void updateBatteryInfo(Intent intent) {
         int battStatus = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
         int battPlugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+        final boolean wasPhysicallyPlugged = mIsPhysicallyPlugged;
+        mIsPhysicallyPlugged = battPlugged != 0;
+        if (wasPhysicallyPlugged != mIsPhysicallyPlugged) {
+            mLimitScheduleDirty = true;
+        }
 
         if (battStatus == BatteryManager.BATTERY_STATUS_FULL) {
             mIsControlCancelledOnce = false;
@@ -395,7 +429,10 @@ public class ChargingControlController extends LineageHealthFeature {
 
         mBatteryPct = level * 100 / (float) scale;
 
-        Log.i(TAG, "mIsPowerConnected: " + mIsPowerConnected + ", mBatteryPct: " + mBatteryPct);
+        if (DEBUG) {
+            Log.d(TAG, "mIsPowerConnected: " + mIsPowerConnected
+                    + ", mBatteryPct: " + mBatteryPct);
+        }
     }
 
     private void updateBatteryInfo() {
@@ -427,6 +464,36 @@ public class ChargingControlController extends LineageHealthFeature {
         handleSettingChange();
     }
 
+    @Override
+    public void onDestroy() {
+        if (mAlarmManager != null && mLimitScheduleAlarmAt != 0) {
+            mAlarmManager.cancel(mLimitScheduleAlarmListener);
+            mLimitScheduleAlarmAt = 0;
+        }
+
+        if (mTimeChangedReceiverRegistered) {
+            mContext.unregisterReceiver(mTimeChangedBroadcastReceiver);
+            mTimeChangedReceiverRegistered = false;
+        }
+
+        if (mAlarmBroadcastReceiver != null) {
+            mContext.unregisterReceiver(mAlarmBroadcastReceiver);
+            mAlarmBroadcastReceiver = null;
+        }
+
+        if (mBattReceiver != null) {
+            mContext.unregisterReceiver(mBattReceiver);
+            mBattReceiver = null;
+        }
+
+        if (mCancelOnceDisconnectReceiver != null) {
+            mContext.unregisterReceiver(mCancelOnceDisconnectReceiver);
+            mCancelOnceDisconnectReceiver = null;
+        }
+
+        super.onDestroy();
+    }
+
     public boolean isChargingModeSupported(int mode) {
         try {
             return isSupported() && (mChargingControl.getSupportedMode() & mode) != 0;
@@ -453,20 +520,24 @@ public class ChargingControlController extends LineageHealthFeature {
 
         mIsControlCancelledOnce = true;
 
-        if (mCurrentProvider.requiresBatteryLevelMonitoring()) {
-            IntentFilter disconnectFilter = new IntentFilter(
+        if (mCurrentProvider.requiresBatteryLevelMonitoring()
+                && mCancelOnceDisconnectReceiver == null) {
+            final IntentFilter disconnectFilter = new IntentFilter(
                     Intent.ACTION_POWER_DISCONNECTED);
 
-            // Register a one-time receiver that resets internal state on power
-            // disconnection
-            mContext.registerReceiver(new BroadcastReceiver() {
+            // Register a one-time receiver that resets internal state on power disconnection.
+            // Keep an explicit reference so repeated cancellations cannot stack receivers and
+            // feature teardown can always unregister it.
+            mCancelOnceDisconnectReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     Log.i(TAG, "Power disconnected, reset internal states");
                     resetInternalState();
                     mContext.unregisterReceiver(this);
+                    mCancelOnceDisconnectReceiver = null;
                 }
-            }, disconnectFilter);
+            };
+            mContext.registerReceiver(mCancelOnceDisconnectReceiver, disconnectFilter);
         }
 
         mCurrentProvider.disable();
@@ -495,7 +566,7 @@ public class ChargingControlController extends LineageHealthFeature {
 
     private void onPowerStatus(boolean enable) {
         // Don't do anything if it is not enabled
-        if (!isEnabled()) {
+        if (!getConfig().enabled) {
             return;
         }
 
@@ -507,22 +578,23 @@ public class ChargingControlController extends LineageHealthFeature {
         }
     }
 
-    private ChargeTime getChargeTime() {
+    private ChargeTime getChargeTime(ChargingConfig config) {
         // Get duration to target full time
         final long currentTime = System.currentTimeMillis();
-        Log.i(TAG, "Current time is " + msToString(mContext, currentTime));
+        if (DEBUG) {
+            Log.d(TAG, "Current time is " + msToString(mContext, currentTime));
+        }
         long targetTime = 0, startTime = currentTime;
-        int mode = getMode();
+        int mode = config.mode;
 
         if (mode == MODE_AUTO) {
             // Use alarm as the target time. Maybe someday we can use a model.
-            AlarmManager m = mContext.getSystemService(AlarmManager.class);
-            if (m == null) {
+            if (mAlarmManager == null) {
                 Log.e(TAG, "Failed to get alarm service!");
                 mChargingNotification.cancel();
                 return null;
             }
-            AlarmManager.AlarmClockInfo alarmClockInfo = m.getNextAlarmClock();
+            AlarmManager.AlarmClockInfo alarmClockInfo = mAlarmManager.getNextAlarmClock();
             if (alarmClockInfo == null) {
                 // We didn't find an alarm. Clear waiting flags because we can't predict anyway
                 Log.w(TAG, "No alarm found, auto charging control has no effect");
@@ -535,8 +607,8 @@ public class ChargingControlController extends LineageHealthFeature {
             startTime = targetTime - DateUtils.HOUR_IN_MILLIS * 9;
         } else if (mode == MODE_MANUAL) {
             // User manually controlled time
-            startTime = getTimeMillisFromSecondOfDay(getStartTime());
-            targetTime = getTimeMillisFromSecondOfDay(getTargetTime());
+            startTime = getTimeMillisFromSecondOfDay(config.startTime);
+            targetTime = getTimeMillisFromSecondOfDay(config.targetTime);
 
             if (startTime > targetTime) {
                 if (currentTime > targetTime) {
@@ -553,10 +625,12 @@ public class ChargingControlController extends LineageHealthFeature {
             return null;
         }
 
-        Log.i(TAG, "Got target time " + msToString(mContext, targetTime)
-                + ", start time " + msToString(mContext, startTime)
-                + ", current time " + msToString(mContext, currentTime));
-        Log.i(TAG, "Raw: " + targetTime + ", " + startTime + ", " + currentTime);
+        if (DEBUG) {
+            Log.d(TAG, "Got target time " + msToString(mContext, targetTime)
+                    + ", start time " + msToString(mContext, startTime)
+                    + ", current time " + msToString(mContext, currentTime));
+            Log.d(TAG, "Raw: " + targetTime + ", " + startTime + ", " + currentTime);
+        }
 
         return new ChargeTime(startTime, targetTime);
     }
@@ -615,7 +689,7 @@ public class ChargingControlController extends LineageHealthFeature {
                 mChargingNotification.cancel();
             }
         } else {
-            ChargeTime chargeTime = getChargeTime();
+            ChargeTime chargeTime = getChargeTime(config);
             if (chargeTime != null) {
                 if (mCurrentProvider.update(mBatteryPct, chargeTime.getStartTime(),
                         chargeTime.getTargetTime(), mode)) {
@@ -644,10 +718,12 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     private void handleSettingChange() {
-        int mode = getMode();
+        mLimitScheduleDirty = true;
+        refreshConfig();
+        int mode = mConfig.mode;
 
-        if (mIsEnabled != isEnabled()) {
-            mIsEnabled = isEnabled();
+        if (mIsEnabled != mConfig.enabled) {
+            mIsEnabled = mConfig.enabled;
 
             if (mIsEnabled) {
                 if (mBattReceiver == null) {
@@ -667,10 +743,15 @@ public class ChargingControlController extends LineageHealthFeature {
             }
         }
 
-        if (!isProvideSupportCCMode(mode)) {
-            Log.e(TAG, "Current provider does not support mode: " + mode
+        if (!switchProviderForMode(mode)) {
+            Log.e(TAG, "No provider supports mode: " + mode
                     + ", setting to default mode");
-            setMode(mDefaultMode);
+            if (!setMode(mDefaultMode)) {
+                Log.e(TAG, "Unable to switch to default charging control mode");
+                return;
+            }
+            refreshConfig();
+            mode = mConfig.mode;
         }
 
         // Reset internal states
@@ -685,11 +766,26 @@ public class ChargingControlController extends LineageHealthFeature {
 
     @Override
     protected void onSettingsChanged(Uri uri) {
+        if (RECHARGE_LEVEL_URI.equals(uri)
+                || LIMIT_SCHEDULE_ENABLED_URI.equals(uri)
+                || LIMIT_START_TIME_URI.equals(uri)
+                || LIMIT_END_TIME_URI.equals(uri)) {
+            // These settings can be applied in place. Avoid resetting the provider, which may
+            // briefly restore unrestricted charging before the new configuration is applied.
+            if (!RECHARGE_LEVEL_URI.equals(uri)) {
+                mLimitScheduleDirty = true;
+            }
+            refreshConfig();
+            updateBatteryInfo();
+            updateChargeControl();
+            return;
+        }
         handleSettingChange();
     }
 
     @Override
     public void dump(PrintWriter pw) {
+        final ChargingConfig config = getConfig();
         pw.println();
         pw.println("ChargingControlController Configuration:");
         pw.println("  Enabled: " + isEnabled());
@@ -706,6 +802,10 @@ public class ChargingControlController extends LineageHealthFeature {
         pw.println("  mIsEnabled: " + mIsEnabled);
         pw.println("  mBatteryPct: " + mBatteryPct);
         pw.println("  mIsPowerConnected: " + mIsPowerConnected);
+        pw.println("  mIsPhysicallyPlugged: " + mIsPhysicallyPlugged);
+        pw.println("  mLimitScheduleDirty: " + mLimitScheduleDirty);
+        pw.println("  mWithinLimitSchedule: " + mWithinLimitSchedule);
+        pw.println("  mLimitScheduleAlarmAt: " + mLimitScheduleAlarmAt);
         pw.println("  mIsNotificationPosted: " + mChargingNotification.isPosted());
         pw.println("  mIsDoneNotification: " + mChargingNotification.isDoneNotification());
         pw.println("  mIsControlCancelledOnce: " + mIsControlCancelledOnce);
