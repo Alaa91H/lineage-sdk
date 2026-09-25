@@ -288,7 +288,7 @@ public class HealthInterface {
             return service.getChargingControlLimit();
         } catch (RemoteException e) {
             clearService(service);
-            return 0;
+            return 100;
         }
     }
 
