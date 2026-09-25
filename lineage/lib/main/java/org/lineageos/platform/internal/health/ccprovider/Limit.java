@@ -19,14 +19,22 @@ import vendor.lineage.health.IChargingControl;
 import java.io.PrintWriter;
 
 public class Limit extends ChargingControlProvider {
+    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final int UNKNOWN_LIMIT = -1;
+
+    private int mAppliedMin = UNKNOWN_LIMIT;
+    private int mAppliedMax = UNKNOWN_LIMIT;
+
     public Limit(IChargingControl chargingControl, Context context) {
         super(context, chargingControl);
     }
 
     @Override
     protected boolean onBatteryChanged(float currentPct, int targetPct, int rechargeLevel) {
-        Log.i(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
-                + ", recharge level: " + rechargeLevel);
+        if (DEBUG) {
+            Log.d(TAG, "Current battery level: " + currentPct + ", target: " + targetPct
+                    + ", recharge level: " + rechargeLevel);
+        }
         return setChargingLimit(targetPct, rechargeLevel);
     }
 
@@ -42,21 +50,32 @@ public class Limit extends ChargingControlProvider {
 
     @Override
     protected void onReset() {
+        // The HAL may have changed while this provider was disabled. Force one synchronization
+        // on every reset, then let the applied-state cache suppress identical battery updates.
+        mAppliedMin = UNKNOWN_LIMIT;
+        mAppliedMax = UNKNOWN_LIMIT;
         setChargingLimit(100, 0);
     }
 
     private boolean setChargingLimit(int targetPct, int rechargeLevel) {
+        final int minPct = targetPct == 100 ? 0 : rechargeLevel;
+        if (mAppliedMax == targetPct && mAppliedMin == minPct) {
+            return true;
+        }
+
         try {
-            final ChargingLimitInfo currentLimit = mChargingControl.getChargingLimit();
-            final int minPct = targetPct == 100 ? 0 : rechargeLevel;
-            if (currentLimit.max != targetPct || currentLimit.min != minPct) {
-                ChargingLimitInfo limit = new ChargingLimitInfo();
-                limit.min = minPct;
-                limit.max = targetPct;
-                mChargingControl.setChargingLimit(limit);
-            }
+            final ChargingLimitInfo limit = new ChargingLimitInfo();
+            limit.min = minPct;
+            limit.max = targetPct;
+            mChargingControl.setChargingLimit(limit);
+            mAppliedMin = minPct;
+            mAppliedMax = targetPct;
             return true;
         } catch (Exception e) {
+            // The HAL state is unknown after an exception. Invalidate the cache so the next
+            // battery update retries instead of assuming the requested limit was applied.
+            mAppliedMin = UNKNOWN_LIMIT;
+            mAppliedMax = UNKNOWN_LIMIT;
             Log.e(TAG, "Failed to set charging limit", e);
             return false;
         }
@@ -80,5 +99,7 @@ public class Limit extends ChargingControlProvider {
     @Override
     public void dump(PrintWriter pw) {
         pw.println("Provider: " + getClass().getName());
+        pw.println("  mAppliedMin: " + mAppliedMin);
+        pw.println("  mAppliedMax: " + mAppliedMax);
     }
 }
