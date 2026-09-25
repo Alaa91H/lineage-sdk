@@ -76,9 +76,9 @@ jobs:
             fi
             echo "::endgroup::"
           done <<'BRANCHES'
-charging-control-schedule-recharge-level
-fix/charging-control-runtime-stability
-BRANCHES
+          charging-control-schedule-recharge-level
+          fix/charging-control-runtime-stability
+          BRANCHES
 
           echo "RESOLVE_TOTAL=$total"
           echo "RESOLVE_SUCCESS=$synced"
