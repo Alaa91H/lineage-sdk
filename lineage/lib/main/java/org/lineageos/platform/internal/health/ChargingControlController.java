@@ -42,6 +42,9 @@ import java.util.Calendar;
 
 public class ChargingControlController extends LineageHealthFeature {
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final int SECONDS_PER_DAY = 24 * 60 * 60;
+    private static final int MIN_PERCENT = 0;
+    private static final int MAX_PERCENT = 100;
 
     private final IChargingControl mChargingControl;
     private final ContentResolver mContentResolver;
@@ -270,7 +273,7 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public boolean setStartTime(int time) {
-        if (time < 0 || time > 24 * 60 * 60) {
+        if (time < 0 || time >= SECONDS_PER_DAY) {
             return false;
         }
 
@@ -286,7 +289,7 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public boolean setTargetTime(int time) {
-        if (time < 0 || time > 24 * 60 * 60) {
+        if (time < 0 || time >= SECONDS_PER_DAY) {
             return false;
         }
 
@@ -311,25 +314,67 @@ public class ChargingControlController extends LineageHealthFeature {
         return true;
     }
 
+    private int sanitizeMode(int mode) {
+        if (mode >= MODE_AUTO && mode <= MODE_LIMIT) {
+            return mode;
+        }
+
+        final int fallback = mDefaultMode >= MODE_AUTO && mDefaultMode <= MODE_LIMIT
+                ? mDefaultMode : MODE_AUTO;
+        Log.w(TAG, "Invalid charging control mode: " + mode + ", using " + fallback);
+        return fallback;
+    }
+
+    private int sanitizePercent(int value, int fallback, String setting) {
+        if (value >= MIN_PERCENT && value <= MAX_PERCENT) {
+            return value;
+        }
+
+        final int safeFallback = Math.max(MIN_PERCENT, Math.min(fallback, MAX_PERCENT));
+        Log.w(TAG, "Invalid " + setting + ": " + value + ", using " + safeFallback);
+        return safeFallback;
+    }
+
+    private int sanitizeSecondOfDay(int value, int fallback, String setting) {
+        if (value >= 0 && value < SECONDS_PER_DAY) {
+            return value;
+        }
+
+        final int safeFallback = Math.max(0, Math.min(fallback, SECONDS_PER_DAY - 1));
+        Log.w(TAG, "Invalid " + setting + ": " + value + ", using " + safeFallback);
+        return safeFallback;
+    }
+
     private ChargingConfig readConfig() {
-        final int limit = getLimit();
+        final int mode = sanitizeMode(getMode());
+        final int limit = sanitizePercent(getLimit(), mDefaultLimit, "charging limit");
+        final int startTime = sanitizeSecondOfDay(
+                getStartTime(), mDefaultStartTime, "charging start time");
+        final int targetTime = sanitizeSecondOfDay(
+                getTargetTime(), mDefaultTargetTime, "charging target time");
         final int maxRechargeLevel = Math.max(20, limit - 1);
         final int rechargeLevel = Math.max(20, Math.min(getInt(
                 LineageSettings.System.CHARGING_CONTROL_RECHARGE_LEVEL,
                 maxRechargeLevel), maxRechargeLevel));
+        final int limitScheduleStartTime = sanitizeSecondOfDay(
+                getInt(LineageSettings.System.CHARGING_CONTROL_LIMIT_START_TIME,
+                        mDefaultStartTime),
+                mDefaultStartTime, "limit schedule start time");
+        final int limitScheduleEndTime = sanitizeSecondOfDay(
+                getInt(LineageSettings.System.CHARGING_CONTROL_LIMIT_END_TIME,
+                        mDefaultTargetTime),
+                mDefaultTargetTime, "limit schedule end time");
 
         return new ChargingConfig(
                 isEnabled(),
-                getMode(),
+                mode,
                 limit,
-                getStartTime(),
-                getTargetTime(),
+                startTime,
+                targetTime,
                 rechargeLevel,
                 getBoolean(LineageSettings.System.CHARGING_CONTROL_LIMIT_SCHEDULE_ENABLED, false),
-                getInt(LineageSettings.System.CHARGING_CONTROL_LIMIT_START_TIME,
-                        mDefaultStartTime),
-                getInt(LineageSettings.System.CHARGING_CONTROL_LIMIT_END_TIME,
-                        mDefaultTargetTime));
+                limitScheduleStartTime,
+                limitScheduleEndTime);
     }
 
     private ChargingConfig getConfig() {
