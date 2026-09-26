@@ -186,7 +186,7 @@ public class HealthInterface {
         try {
             return checkService() ? sService.getChargingControlStartTime() : 0;
         } catch (RemoteException e) {
-            return 0;
+            return 100;
         }
     }
 
