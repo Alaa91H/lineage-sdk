@@ -40,6 +40,10 @@ import vendor.lineage.health.IChargingControl;
 import java.io.PrintWriter;
 
 public class ChargingControlController extends LineageHealthFeature {
+    private static final int SECONDS_PER_DAY = 24 * 60 * 60;
+    private static final int MIN_PERCENT = 0;
+    private static final int MAX_PERCENT = 100;
+
     private final IChargingControl mChargingControl;
     private final ContentResolver mContentResolver;
     private ChargingControlNotification mChargingNotification;
@@ -138,9 +142,17 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public int getMode() {
-        return LineageSettings.System.getInt(mContentResolver,
+        final int mode = LineageSettings.System.getInt(mContentResolver,
                 LineageSettings.System.CHARGING_CONTROL_MODE,
                 mDefaultMode);
+        if (mode >= MODE_AUTO && mode <= MODE_LIMIT) {
+            return mode;
+        }
+
+        final int fallback = mDefaultMode >= MODE_AUTO && mDefaultMode <= MODE_LIMIT
+                ? mDefaultMode : MODE_AUTO;
+        Log.w(TAG, "Invalid charging control mode: " + mode + ", using " + fallback);
+        return fallback;
     }
 
     public boolean setMode(int mode) {
@@ -186,13 +198,14 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public int getStartTime() {
-        return LineageSettings.System.getInt(mContentResolver,
+        final int time = LineageSettings.System.getInt(mContentResolver,
                 LineageSettings.System.CHARGING_CONTROL_START_TIME,
                 mDefaultStartTime);
+        return sanitizeSecondOfDay(time, mDefaultStartTime, "charging start time");
     }
 
     public boolean setStartTime(int time) {
-        if (time < 0 || time > 24 * 60 * 60) {
+        if (time < 0 || time >= SECONDS_PER_DAY) {
             return false;
         }
 
@@ -201,13 +214,14 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public int getTargetTime() {
-        return LineageSettings.System.getInt(mContentResolver,
+        final int time = LineageSettings.System.getInt(mContentResolver,
                 LineageSettings.System.CHARGING_CONTROL_TARGET_TIME,
                 mDefaultTargetTime);
+        return sanitizeSecondOfDay(time, mDefaultTargetTime, "charging target time");
     }
 
     public boolean setTargetTime(int time) {
-        if (time < 0 || time > 24 * 60 * 60) {
+        if (time < 0 || time >= SECONDS_PER_DAY) {
             return false;
         }
 
@@ -216,9 +230,10 @@ public class ChargingControlController extends LineageHealthFeature {
     }
 
     public int getLimit() {
-        return LineageSettings.System.getInt(mContentResolver,
+        final int limit = LineageSettings.System.getInt(mContentResolver,
                 LineageSettings.System.CHARGING_CONTROL_LIMIT,
                 mDefaultLimit);
+        return sanitizePercent(limit, mDefaultLimit, "charging limit");
     }
 
     public boolean setLimit(int limit) {
@@ -228,6 +243,26 @@ public class ChargingControlController extends LineageHealthFeature {
 
         putInt(LineageSettings.System.CHARGING_CONTROL_LIMIT, limit);
         return true;
+    }
+
+    private int sanitizePercent(int value, int fallback, String setting) {
+        if (value >= MIN_PERCENT && value <= MAX_PERCENT) {
+            return value;
+        }
+
+        final int safeFallback = Math.max(MIN_PERCENT, Math.min(fallback, MAX_PERCENT));
+        Log.w(TAG, "Invalid " + setting + ": " + value + ", using " + safeFallback);
+        return safeFallback;
+    }
+
+    private int sanitizeSecondOfDay(int value, int fallback, String setting) {
+        if (value >= 0 && value < SECONDS_PER_DAY) {
+            return value;
+        }
+
+        final int safeFallback = Math.max(0, Math.min(fallback, SECONDS_PER_DAY - 1));
+        Log.w(TAG, "Invalid " + setting + ": " + value + ", using " + safeFallback);
+        return safeFallback;
     }
 
     public boolean reset() {
